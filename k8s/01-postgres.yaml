@@ -1,0 +1,68 @@
+# Postgres runs inside the cluster (a PVC, not a managed RDS instance) --
+# a deliberate cost choice: the whole pipeline fits on one free-tier EC2
+# node instead of needing a second paid managed service.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-credentials
+  namespace: order-pipeline
+type: Opaque
+stringData:
+  POSTGRES_USER: orderuser
+  POSTGRES_PASSWORD: orderpass
+  POSTGRES_DB: orders
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: order-pipeline
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: order-pipeline
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          envFrom:
+            - secretRef: {name: postgres-credentials}
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata  # avoids postgres's "directory not empty" complaint about lost+found
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "orderuser", "-d", "orders"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: postgres-data}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: order-pipeline
+spec:
+  selector: {app: postgres}
+  ports:
+    - port: 5432
+      targetPort: 5432

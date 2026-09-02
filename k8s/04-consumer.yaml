@@ -1,0 +1,23 @@
+# No Service -- the consumer doesn't accept inbound traffic, it pulls
+# from RabbitMQ. Scaling replicas here scales processing throughput
+# independently of the producer's request-handling capacity.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consumer
+  namespace: order-pipeline
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: consumer}
+  template:
+    metadata:
+      labels: {app: consumer}
+    spec:
+      containers:
+        - name: consumer
+          image: ghcr.io/saijignas/order-processing-pipeline:latest
+          command: ["python", "-m", "consumer.worker"]
+          env:
+            - {name: DATABASE_URL, value: "postgresql://orderuser:orderpass@postgres:5432/orders"}
+            - {name: RABBITMQ_URL, value: "amqp://guest:guest@rabbitmq:5672/%2F"}
