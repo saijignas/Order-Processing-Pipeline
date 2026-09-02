@@ -1,5 +1,7 @@
 # Order Processing Pipeline — Event-Driven, RabbitMQ
 
+![CI](https://github.com/saijignas/Order-Processing-Pipeline/actions/workflows/ci.yml/badge.svg)
+
 A producer and consumer, decoupled by a real message queue, with the two
 things that actually matter in an at-least-once delivery system: retries
 don't spin forever, and redelivery doesn't double-process. Not a toy
