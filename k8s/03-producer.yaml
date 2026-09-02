@@ -1,12 +1,16 @@
-# Image pushed to GitHub Container Registry by CI (see .github/workflows/
-# ci.yml) -- replace :latest with a specific tag once CD is wired up.
+# Image: built directly on the node (`docker build -t order-pipeline:local .`)
+# rather than pulled from a registry. This single free-tier VM has 1GB RAM
+# total -- real headroom for a registry+CD pipeline exists, but wasn't worth
+# spending on this box specifically. replicas: 1 for the same reason (2
+# replicas each of producer/consumer was the original design intent, visible
+# in git history, but doesn't fit here).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: producer
   namespace: order-pipeline
 spec:
-  replicas: 2  # the point of decoupling producer from consumer: this can scale independently
+  replicas: 1
   selector:
     matchLabels: {app: producer}
   template:
@@ -15,13 +19,15 @@ spec:
     spec:
       initContainers:
         - name: init-db
-          image: ghcr.io/saijignas/order-processing-pipeline:latest
+          image: order-pipeline:local
+          imagePullPolicy: IfNotPresent
           command: ["python", "-m", "shared.init_db"]
           env:
             - {name: DATABASE_URL, value: "postgresql://orderuser:orderpass@postgres:5432/orders"}
       containers:
         - name: producer
-          image: ghcr.io/saijignas/order-processing-pipeline:latest
+          image: order-pipeline:local
+          imagePullPolicy: IfNotPresent
           command: ["uvicorn", "producer.app:app", "--host", "0.0.0.0", "--port", "8000"]
           env:
             - {name: DATABASE_URL, value: "postgresql://orderuser:orderpass@postgres:5432/orders"}

@@ -11,6 +11,14 @@ applied on the write path instead of a cache read path.
 
 **Stack:** Python, FastAPI, RabbitMQ, PostgreSQL, Docker, Kubernetes.
 
+**[Live demo](http://order-pipeline-saijignas.centralindia.cloudapp.azure.com:30080/health)** — running on a single free-tier Azure VM (k3s). Try it:
+```bash
+curl -X POST http://order-pipeline-saijignas.centralindia.cloudapp.azure.com:30080/orders \
+  -H "Content-Type: application/json" \
+  -d '{"customer_id": "demo", "items": [{"sku": "WIDGET-1", "quantity": 1}]}'
+# GET the returned id a moment later -- status will have moved pending -> completed
+```
+
 ## Architecture
 
 ```mermaid
@@ -72,20 +80,33 @@ observable by waiting for real, unpredictable flakiness.
 
 ## Deployment
 
-Kubernetes manifests (`k8s/`) run the whole pipeline — Postgres,
-RabbitMQ, producer, and consumer, each independently scalable — on a
-single free-tier AWS EC2 instance running **k3s** (a lightweight, still
-CNCF-certified Kubernetes distribution). That's a deliberate cost
-choice over AWS's managed EKS, whose control plane alone runs
-~$73/month regardless of usage — not something to leave running for a
-portfolio project. Postgres and RabbitMQ run inside the cluster too
-(not a managed RDS/Amazon MQ instance), so the entire stack fits on one
-node.
+**Live**, on a single free-tier Azure VM (Azure for Students — AWS/GCP
+free tiers require a card, Azure for Students doesn't) running **k3s**
+(a lightweight, still CNCF-certified Kubernetes distribution) instead of
+a managed control plane like EKS/AKS, whose price (~$73/month for EKS
+alone) isn't worth paying for a portfolio project. Postgres and RabbitMQ
+run inside the cluster too, not as managed services, so the entire stack
+fits on one node.
 
-**Status: manifests are written and reviewable; live deployment is
-pending AWS account setup.** This section will be updated with the
-actual cluster once that's live — disclosed here rather than silently
-leaving the README implying something that isn't running yet.
+**The honest constraint:** the free-tier VM size available to this
+subscription has 1GB RAM. That's tight enough that it shaped real
+decisions, disclosed here rather than smoothed over:
+- **1 replica each** for producer/consumer, not the 2 originally
+  designed for (visible in git history) — running 2 of each was not
+  going to fit.
+- **Image built directly on the node** (`docker build`), not pulled
+  from a registry via CI/CD — the registry+CD path is a real
+  next step, just not one this specific box's RAM was spent on.
+- **2GB swap** added on top of the 1GB RAM so k3s's own control-plane
+  overhead doesn't OOM-kill the actual application pods.
+- Traefik (k3s's bundled ingress controller) and metrics-server were
+  removed — unused here (the producer is exposed via a plain NodePort)
+  and not worth the RAM on a box this small.
+
+None of this changes the pipeline's actual guarantees (idempotency,
+retry, DLQ all work identically regardless of replica count) — it's
+exactly the kind of resource-constrained tradeoff a real small-scale
+deployment runs into, made explicit instead of hidden.
 
 ## Limitations
 

@@ -1,13 +1,15 @@
 # No Service -- the consumer doesn't accept inbound traffic, it pulls
 # from RabbitMQ. Scaling replicas here scales processing throughput
 # independently of the producer's request-handling capacity.
+# replicas: 1 and a locally-built image: see the note in 03-producer.yaml --
+# this single free-tier VM has 1GB RAM total.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: consumer
   namespace: order-pipeline
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels: {app: consumer}
   template:
@@ -16,7 +18,8 @@ spec:
     spec:
       containers:
         - name: consumer
-          image: ghcr.io/saijignas/order-processing-pipeline:latest
+          image: order-pipeline:local
+          imagePullPolicy: IfNotPresent
           command: ["python", "-m", "consumer.worker"]
           env:
             - {name: DATABASE_URL, value: "postgresql://orderuser:orderpass@postgres:5432/orders"}
