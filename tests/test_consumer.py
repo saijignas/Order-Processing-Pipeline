@@ -55,6 +55,45 @@ def test_unknown_order_id_is_handled_without_raising(db_session):
     assert result == "unknown_order"
 
 
+def test_concurrent_redelivery_of_the_same_order_completes_exactly_once(make_order, db_session):
+    """Simulates two consumer instances (or two redelivered copies of the
+    same message, arriving before either has committed) calling
+    process_order() for the SAME order_id at the same time. Each call
+    opens its own DB session/connection -- exactly how two real consumer
+    processes would -- so this exercises the actual row lock in Postgres,
+    not just in-process logic.
+
+    Without the SELECT ... FOR UPDATE fix, both threads can read
+    status != "completed" before either writes, and both proceed to run
+    the "real processing" step -- this test would then intermittently
+    (racily) observe two "completed" results instead of one "completed"
+    and one "already_done". With the fix, the second thread blocks on the
+    row lock and, once unblocked, correctly sees the first thread's
+    committed "completed" status.
+    """
+    import threading
+
+    order = make_order(simulate_failures=0)
+    results = [None, None]
+
+    def run(slot):
+        results[slot] = process_order(order.id, attempt_retry_count=0)
+
+    t1 = threading.Thread(target=run, args=(0,))
+    t2 = threading.Thread(target=run, args=(1,))
+    t1.start()
+    t2.start()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    assert sorted(results) == ["already_done", "completed"], (
+        f"expected exactly one 'completed' and one 'already_done', got {results} -- "
+        "if this shows two 'completed's, the order was double-processed"
+    )
+    db_session.refresh(order)
+    assert order.status == "completed"
+
+
 class _FakeMethod:
     def __init__(self, tag=1):
         self.delivery_tag = tag

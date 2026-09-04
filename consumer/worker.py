@@ -41,10 +41,26 @@ def process_order(order_id, attempt_retry_count):
     """Returns one of: 'completed', 'already_done', 'failed_will_retry',
     'failed_dlq'. Raises nothing -- failure is a return value, not an
     exception, so the caller doesn't need a try/except around DB state
-    changes it already committed."""
+    changes it already committed.
+
+    The initial read uses SELECT ... FOR UPDATE, and the whole
+    claim-through-completion sequence commits once, at the end, instead
+    of mid-function. That makes this function one atomic critical section
+    per order_id: if two consumer instances (or two redelivered copies of
+    the same message) call this for the same order_id concurrently, the
+    second call blocks on the row lock until the first commits, then
+    re-reads and correctly sees the outcome (e.g. status == "completed")
+    instead of racing past the status check and reprocessing. Without
+    this, a plain read-then-write has a TOCTOU gap between the status
+    check and the status write, wide enough for a concurrent redelivery
+    to slip through. The pipeline runs a single consumer replica today
+    (see k8s/04-consumer.yaml), so that race can't actually manifest in
+    the current deployment -- but the guarantee should hold because of
+    the code, not because of how many replicas happen to be running.
+    """
     session = SessionLocal()
     try:
-        order = session.query(Order).filter_by(id=order_id).first()
+        order = session.query(Order).filter_by(id=order_id).with_for_update().first()
         if order is None:
             return "unknown_order"
 
@@ -53,13 +69,13 @@ def process_order(order_id, attempt_retry_count):
 
         order.status = "processing"
         order.retry_count = attempt_retry_count
-        session.commit()
 
         if order.simulate_failures > attempt_retry_count:
             if attempt_retry_count >= MAX_RETRIES:
                 order.status = "failed"
                 session.commit()
                 return "failed_dlq"
+            session.commit()
             return "failed_will_retry"
 
         # "Real" processing: inventory check + payment simulation. Both
